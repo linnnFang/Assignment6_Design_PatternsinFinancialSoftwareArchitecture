@@ -1,0 +1,8 @@
+{
+  "log_level": "INFO",
+  "data_path": "./data/",
+  "portfolio_structure_path": "./data/portfolio_structure.json",
+  "report_path": "./reports/",
+  "default_strategy": "MeanReversionStrategy"
+  
+}
