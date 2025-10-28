@@ -7,6 +7,7 @@ Factory, Singleton, Builder + Composite, Decorator, Adapter, Strategy, Observer,
 ---
 
 ## 📦 Project Structure (suggested)
+![image info](flowchart_trading_engine.png)
 
 ```
 .
