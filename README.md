@@ -92,7 +92,7 @@ You should see signal logs (if any), a metrics snapshot, and final positions.
 
 ## 🧱 Patterns in This Scaffold
 
-- **Factory**: (your `InstrumentFactory`) creates `Instrument` objects from CSV.
+- **Factory**: (`InstrumentFactory`) creates `Instrument` objects from CSV.
 - **Singleton**: `Config` loads `config.json` once; shared instance across modules.
 - **Builder + Composite**: `PortfolioBuilder` builds nested `PortfolioGroup` trees of `Position`s.
 - **Decorator**: `VolatilityDecorator`, `BetaDecorator`, `DrawdownDecorator` augment `.get_metrics()` results without touching base classes.
