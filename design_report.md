@@ -1,7 +1,6 @@
 # Design Report
 
 **Project:** Assignment – Design Patterns in Financial Software Architecture  
-**Audience:** Teammates, TAs, Future Contributors  
 **Scope:** Summary of patterns used, rationale, trade-offs, and how pieces fit together
 
 ---
