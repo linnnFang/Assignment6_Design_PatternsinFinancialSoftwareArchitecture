@@ -3,7 +3,11 @@
 from __future__ import annotations
 from typing import List, Dict, Any, Protocol
 
-
+'''
+SignalPublisher: .attach(observer) and .notify(signal).
+LoggerObserver: logs signals
+AlertObserver: alerts on large trades
+'''
 class Observer(Protocol):
     def update(self, signal: Dict[str, Any]) -> None:
         ...

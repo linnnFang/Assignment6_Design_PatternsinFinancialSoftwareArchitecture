@@ -4,7 +4,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List
 
-
+'''
+Command: abstract class
+Account: a simple portfolio with cash and positions
+ExecuteOrderCommand: execute and undo
+CommandInvoker: manage the history and redo
+'''
 class Command(ABC):
     @abstractmethod
     def execute(self) -> Any:

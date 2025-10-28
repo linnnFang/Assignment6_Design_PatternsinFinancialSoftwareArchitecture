@@ -1,107 +1,59 @@
-# main.py
-"""
-from patterns.singleton import Config
-from engine import TradingEngine
-from reporting import Logger
-from dataloader import load_instruments_from_csv
-import json
-import os
 
-def main():
-    # ---- print working directory ----
-    print("[CWD]", os.getcwd())
-
-    # ---- First load config (global singleton) ----
-    cfg = Config("config.json")
-    print("\nCONFIG =", json.dumps(cfg._data, indent=2))
-
-    # ---- Initialize engine and logger ----
-    engine = TradingEngine(cfg)    # ✅ External use of Config()
-    logger = Logger()           # ✅ Internal use of Config()
-
-    # ---- Run engine ----
-    print("\n===== ENGINE RUN =====")
-    engine.run()
-
-    # ---- output summary ----
-    print("\n===== REPORTING =====")
-    logger.log_summary()
-
-    print("\n===== END =====")
-
-if __name__ == "__main__":
-    main()
-"""
-"""
-# main.py
-from patterns.singleton import Config
-from dataloader import DataLoader
-from engine import TradingEngine
-from reporting import Logger
-import json
-
-def main():
-    # initialize the singleton with the file path ONCE
-    cfg = Config("config.json")
-    print("\nCONFIG =", json.dumps(cfg._data, indent=2))
-
-    dataloader = DataLoader(cfg)
-    engine = TradingEngine(cfg)
-    logger = Logger()
-
-    inst = dataloader.load_instruments_from_csv()
-    engine.run()
-    logger.log_summary()
-
-if __name__ == "__main__":
-    main()
-
-"""
 
 # main.py
 from patterns.singleton import Config
 from dataloader import DataLoader
 from engine import TradingEngine
-from reporting import Logger
 from patterns.builder import PortfolioBuilder
+from patterns.command import *
+from patterns.observer import *
+from patterns.strategy import *
+from models import *
+
+
+
 import json
 
 def main():
-    cfg = Config("./data/config.json")
-    print("\nCONFIG =", json.dumps(cfg._data, indent=2))
+    
+    cfg = Config("data/config.json")
+    loader = DataLoader(cfg)
+    data_iter = iter(loader.load_market_data())  
 
-    dataloader = DataLoader(cfg)
-    engine = TradingEngine(cfg)
-    logger = Logger()
-
-    # instruments
-    inst = dataloader.load_instruments_from_csv()
-
-    # only for portfolio building demo
-    port_path = cfg.get("portfolio_structure_path", "./data/portfolio_structure.json")
-    builder = PortfolioBuilder.from_json(port_path)
+    # 1) build portfolio
+    builder = PortfolioBuilder.from_json(loader.portfolio_structure_path)
     portfolio = builder.build()
 
-    # test output
-    print("\n=== Portfolio Summary ===")
-    portfolio.summary()
-    print("\nFlattened Positions:", portfolio.get_positions())
+    # 2) account & commands
+    account = Account(cash=100_000)
+    invoker = CommandInvoker()
+    executor = ExecuteOrderCommand(account, invoker)
 
+    # 3) observers
+    publisher = SignalPublisher()
+    publisher.attach(LoggerObserver())
+    publisher.attach(AlertObserver(threshold=1000))
+
+    # 4) strategies
+    strats = [
+        MeanReversionStrategy(window=20, threshold=0.02, size=10.0),
+        BreakoutStrategy(window=20, size=10.0),
+    ]
+
+    # 5) router & risk
+    container = MarketDataContainer()  # sink for fills
+
+
+    # 7) engine
+    engine = TradingEngine(data_iter, strats, publisher,portfolio, executor, container)
+
+    # 8) run
     engine.run()
-    logger.log_summary()
+    print(account)               # see cash/positions
+    print(container.positions)   # if you mirror positions here
+
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
 
 

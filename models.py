@@ -7,6 +7,16 @@ from typing import List, Dict, Any, Protocol
 from abc import ABC, abstractmethod
 import random
 import datetime
+from patterns.builder import PortfolioBuilder
+         
+class MarketDataPoint:
+    def __init__(self, symbol: str, price: float, timestamp: datetime):
+        self.symbol = symbol
+        self.price = price
+        self.timestamp = timestamp
+
+    def __repr__(self):
+        return f"MarketDataPoint(symbol={self.symbol}, price={self.price}, timestamp={self.timestamp})"
 
 @dataclass
 class Instrument:
@@ -120,35 +130,78 @@ class Portfolio:
         for sp in self.subportfolios:
             sp.summary(indent + 2)
 
-@dataclass(frozen=True, slots=True)
-class MarketDataPoint:
-    """
-    Minimal market data tick.
-    - symbol   : ticker
-    - timestamp: timezone-aware datetime
-    - price    : last price (or mid)
-    - source   : data source id (e.g., 'Yahoo', 'Bloomberg')
-    """
+@dataclass
+class Order:
+    side: str                  # "BUY" | "SELL"
     symbol: str
-    timestamp: datetime
+    quantity: int
     price: float
-    source: str
+    timestamp: datetime
+    status: str = "NEW"        # "NEW" -> "FILLED"/"REJECTED"
 
-    def as_dict(self) -> dict:
-        return {
-            "symbol": self.symbol,
-            "timestamp": self.timestamp.isoformat(),
-            "price": self.price,
-            "source": self.source,
-        }
+    def validate(self) -> None:
+        s = self.side.upper()
+        if s not in {"BUY","SELL"}:
+            raise OrderError(f"Invalid side: {self.side}")
+        if self.quantity <= 0:
+            raise OrderError("Quantity must be > 0")
+        if self.price <= 0:
+            raise OrderError("Price must be > 0")
+        if not self.symbol:
+            raise OrderError("Symbol is required")
+        self.side = s
 
-def parse_ts(ts: str) -> datetime:
-    """Parse ISO8601 with possible trailing 'Z' into aware UTC datetime."""
-    # Handle 'Z' suffix for UTC
-    if ts.endswith("Z"):
-        ts = ts[:-1] + "+00:00"
-    dt = datetime.fromisoformat(ts)
-    # Ensure timezone-aware (if input lacked offset)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+class MarketDataContainer:
+    """
+    - Buffer incoming MarketDataPoint instances in a list (self.buffer)
+    - Store open positions as {'SYM': {'quantity': int, 'avg_price': float}}
+    - Collect signals as a list of tuples (action, symbol, qty, price)
+    """
+    def __init__(self) -> None:
+        self.buffer: List[MarketDataPoint] = []
+        self.positions: Dict[str, Dict[str, float]] = {}
+        self.signals: List[Tuple[str, str, int, float]] = []
+
+    def buffer_data(self, data_point: MarketDataPoint) -> None:
+        self.buffer.append(data_point)
+
+    def last(self) -> Optional[MarketDataPoint]:
+        return self.buffer[-1] if self.buffer else None
+
+    def recent(self, n: int):
+        return self.buffer[-n:] if n > 0 else []
+
+    def __len__(self) -> int:
+        return len(self.buffer)
+
+    def __iter__(self):
+        return iter(self.buffer)
+
+    # position
+    def _ensure_pos(self, symbol: str) -> Dict[str, float]:
+        if symbol not in self.positions:
+            self.positions[symbol] = {"quantity": 0, "avg_price": 0.0}
+        return self.positions[symbol]
+
+    def apply_fill(self, order: Order) -> None:
+        pos = self._ensure_pos(order.symbol)
+        q = int(order.quantity)
+        px = float(order.price)
+
+        if order.side == "BUY":
+            old_q = pos["quantity"]
+            new_q = old_q + q
+            pos["avg_price"] = (pos["avg_price"] * old_q + px * q) / new_q if new_q > 0 else 0.0
+            pos["quantity"] = new_q
+        elif order.side == "SELL":
+            sell_q = min(q, pos["quantity"])
+            pos["quantity"] -= sell_q
+            if pos["quantity"] == 0:
+                pos["avg_price"] = 0.0
+
+    # signal
+    def add_signal(self, action: str, symbol: str, qty: int, price: float) -> None:
+        self.signals.append((action, symbol, qty, price))
+
+    def clear_signals(self) -> None:
+        self.signals.clear()

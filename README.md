@@ -10,18 +10,41 @@ Factory, Singleton, Builder + Composite, Decorator, Adapter, Strategy, Observer,
 
 ```
 .
-├── main.py                     # Orchestrates config → ingestion → strategy → observers → execution
-├── reporting.py                # Observer-based logging & simple analytics
-├── patterns/
-│   ├── __init__.py
-│   └── adapter.py              # Yahoo/Bloomberg Adapters → MarketDataPoint
-├── data/
-│   ├── external_data_yahoo.json
-│   └── external_data_bloomberg.xml
-├── tests/
-│   ├── test_reporting.py
-│   └── (add more: factory / singleton / decorators / command / strategy)
-└── README.md
+├─ data/
+│  ├─ config.json
+│  ├─ external_data_bloomberg.xml
+│  ├─ external_data_yahoo.json
+│  ├─ instruments.csv
+│  ├─ market_data.csv
+│  ├─ portfolio_structure.json
+│  └─ strategy_params.json
+│
+├─ patterns/                 # Design pattern implementations
+│  ├─ __init__.py
+│  ├─ builder.py            # PortfolioBuilder (Builder) + Composite integration
+│  ├─ command.py            # Command, ExecuteOrderCommand, Account, Invoker
+│  ├─ factory.py            # InstrumentFactory (Factory)
+│  ├─ observer.py           # SignalPublisher + Observers (Observer)
+│  ├─ singleton.py          # Config (Singleton)
+│  └─ strategy.py           # Strategy base + MeanReversion/Breakout
+│
+├─ tests/                    # Pytest test suite
+│  ├─ __init__.py
+│  ├─ test_mean_reversion.py
+│  ├─ test_observer.py
+│  ├─ test_reporting.py
+│  └─ test_singleton.py
+│
+├─ analytics.py              # metrics/report utilities
+├─ dataloader.py             # Adapters (Yahoo/Bloomberg) + CSV loading
+├─ designreport.md           # Design report (patterns, rationale, trade-offs)
+├─ engine.py                 # TradingEngine orchestration (data → signals → orders → fills)
+├─ flowchart_trading_engine.png   # Architecture diagram (PNG)
+├─ flowchart_trading_engine.svg   # Architecture diagram (SVG)
+├─ models.py
+├─ reporting.py
+└─ main.py                   # CLI entry / demo runner
+
 ```
 
 > If you keep `models.py` (e.g., `MarketDataPoint`, `parse_ts`) in the repo root,

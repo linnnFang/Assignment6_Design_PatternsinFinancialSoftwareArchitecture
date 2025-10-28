@@ -1,19 +1,3 @@
-"""
-# reporting.py
-print(">>> REPORTING FILE USED:", __file__)
-
-from patterns.singleton import Config
-
-class Logger:
-    def __init__(self):
-        self.cfg = Config()  # ✅ automatic singleton access
-        self.level = self.cfg.get("log_level") or "INFO"
-
-    def log_summary(self):
-        print(f"Final report using log level: {self.level}")
-        print(f"Reports will be saved to: {self.cfg.get('report_path')}")
-        print("Reporting completed.")
-"""
 
 from __future__ import annotations
 from typing import Protocol, Dict, Any, List
