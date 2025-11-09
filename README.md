@@ -240,4 +240,4 @@ metrics = wrapped.get_metrics()
 ---
 
 ## 📄 License
-For course use. Adapt as needed for your assignments or demos.
+For course use. 
