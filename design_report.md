@@ -34,9 +34,9 @@ flowchart LR
 
   P --> R[OrderRouter]
   R --> K[RiskManager]
-  K --> X[ExecuteOrderCommand + CommandInvoker]
-  X --> AC[Account (cash, positions)]
-  AC --> PG[PortfolioGroup (Composite)]
+  K --> X["ExecuteOrderCommand + CommandInvoker"]
+  X --> AC["Account (cash, positions)"]
+  AC --> PG["PortfolioGroup (Composite)"]
   D -->|Decorators| AN[Instrument Analytics]
 ```
 
