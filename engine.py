@@ -1,4 +1,4 @@
-
+"""
 from __future__ import annotations
 from patterns.singleton import Config
 from typing import Iterable, List, Dict, Tuple
@@ -8,100 +8,88 @@ from models import *
 from patterns.strategy import  *
 from patterns.command import *
 
-'''
-class TradingEngine:
-    def __init__(self, cfg: Config):   # cfg is a singleton instance
-        self.cfg = cfg
-        self.level = self.cfg.get("log_level") or "INFO"
-
-    def run(self):
-        print("[Engine] run() called. (Temporarily not connected to portfolio and market_data))")
-        print(f"Running engine (log level: {self.level})")
-        print(f"Using default strategy: {self.cfg.get('default_strategy')}")
-        print(f"Engine using data: {self.cfg.get('data_path')}")
-        print("Engine run completed.")
-
-'''
 
 
-''' engine = TradingEngine(data_iter, strats, publisher,portfolio, executor, container)'''
+
+''' 
+engine = TradingEngine(data_iter, strats, publisher,portfolio, executor, container)'''
 
 class TradingEngine:
-    """
+    
     Ticks -> signals -> orders -> fills -> positions, with resilient logging.
     input: strategies lists
-    """
-    def __init__(self, data_iter, strategies, publisher,  executor, portfolio_sink):
+
+    def __init__(self, data_iter, strategies, publisher, portfolio, account, portfolio_sink):
         self.data_iter = data_iter               # iterable[MarketDataPoint]
         self.strategies = strategies             # list[Strategy]
-        self.publisher = publisher               # SignalPublisher
-        self.executor = executor                 # wraps CommandInvoker+Account
+        self.publisher = publisher                  # SignalPublisher
+        self.portfolio = portfolio             
+        self.account   = account                # wraps CommandInvoker+Account
         self.portfolio_sink = portfolio_sink     # MarketDataContainer or Portfolio
 
 
-
-    # ---- lifecycle ----
-    def on_tick(self, tick: MarketDataPoint) -> None:
-        self.container.buffer_data(tick)
-
+    
+    def run(self):
+        '''1. load data from data iter'''
+        dataset = MarketDataContainer()
+        for data in self.data_iter:
+            dataset.buffer_data(data)
+        
+        ''' 2. generate signals'''
+        invoker = CommandInvoker()
+        signals = {}
         for strat in self.strategies:
-            try:
-                signals = strat.generate_signals(tick) or []
+                signals[strat.__name__] = [strat.generate_signals(tick for tick in dataset)]
+                for signal in signals[strat.__name__]:
+                    cmd = ExecuteOrderCommand(self.account, signal)
+                    invoker.execute_cmd(cmd)
 
-                if not signals: continue
+                     
 
-                orders = self._create_orders(signals, tick)
-                for order in orders:
-                    try:
-                        self._execute(order)
-                    except Exception as ex:
-                        order.status = "REJECTED"
-                        self.error_log.append(f"{tick.timestamp} {order.symbol} {order.side} x{order.quantity}: EXECUTION ERROR: {ex}")
-                    finally:
-                        self.order_log.append(order)
-            except Exception as ex:
-                self.error_log.append(f"{tick.timestamp} Strategy {type(strat).__name__} error: {ex}")
+        ''' 3. update accounts'''
 
-    def run(self, market: Iterable[MarketDataPoint]) -> None:
-        print("[Engine] run() called. (Temporarily not connected to portfolio and market_data))")
-        for tick in sorted(market, key=lambda t: t.timestamp):
-            self.on_tick(tick)
+        return signals"""
 
-    def report(self) -> Dict:
-        return {
-            "positions": {k: v.copy() for k, v in self.container.positions.items()},
-            "orders": [{
-                "time": o.timestamp.isoformat(),
-                "symbol": o.symbol,
-                "side": o.side,
-                "qty": o.quantity,
-                "price": o.price,
-                "status": o.status
-            } for o in self.order_log],
-            "errors": list(self.error_log),
-        }
+from __future__ import annotations
+from typing import Iterable, Dict, Any, List, Callable
+from models import MarketDataPoint
+from patterns.command import Account, ExecuteOrderCommand, CommandInvoker
+from patterns.observer import SignalPublisher
+from patterns.strategy import Strategy
 
-    # ---- helpers ----
-    def _create_orders(self, signals: List[Tuple], tick: MarketDataPoint) -> List[Order]:
-        orders: List[Order] = []
-        for s in signals:
-            if len(s) == 3:
-                side, symbol, qty = s
-                price = float(tick.price)
-            elif len(s) == 4:
-                side, symbol, qty, price = s
-            else:
-                raise OrderError(f"Bad signal shape: {s}")
-            o = Order(side=str(side).upper(), symbol=symbol, quantity=int(qty), price=float(price), timestamp=tick.timestamp)
-            o.validate()
-            orders.append(o)
-        return orders
+class OrderRouter:
+    def route(self, signal: Dict[str, Any]):
+        return signal  # identity: we use signal fields directly
 
-    def _execute(self, order: Order) -> None:
-        # Simulate flaky fills 3% of the time
-        if random.random() < 0.03:
-            raise ExecutionError("Simulated venue outage")
-        # Fill at provided price
-        order.status = "FILLED"
-        # apply to positions (quantity + avg_price schema)
-        self.container.apply_fill(order)
+class BasicRisk:
+    def __init__(self, positions: Dict[str, float], max_pos=1000, max_order=500):
+        self.positions = positions; self.max_pos=max_pos; self.max_order=max_order
+    def approve(self, signal: Dict[str, Any]) -> Dict[str, Any] | None:
+        qty = float(signal["size"])
+        if qty <= 0 or qty > self.max_order: return None
+        sym = signal["symbol"]; side = signal["action"].upper()
+        curr = self.positions.get(sym, 0.0)
+        proj = curr + (qty if side=="BUY" else -qty)
+        if abs(proj) > self.max_pos: return None
+        return signal
+
+class TradingEngine:
+    def __init__(self, data: Iterable[MarketDataPoint], strategies: List[Strategy],
+                 publisher: SignalPublisher, router: OrderRouter,
+                 risk: BasicRisk, account: Account, invoker: CommandInvoker,
+                 on_fill: Callable[[Dict[str, Any]], None] | None = None):
+        self.data = data; self.strategies = strategies; self.publisher = publisher
+        self.router = router; self.risk = risk; self.account = account; self.invoker = invoker
+        self.on_fill = on_fill
+
+    def run(self):
+        for tick in self.data:                      # ← one pass over data
+            for strat in self.strategies:          # ← BOTH strategies per tick
+                for sig in strat.generate_signals(tick):
+                    self.publisher.notify(sig)      # observers
+                    order_like = self.router.route(sig)
+                    approved = self.risk.approve(order_like)
+                    if not approved: continue
+                    cmd = ExecuteOrderCommand.from_signal(self.account, approved)
+                    res = self.invoker.execute_cmd(cmd)
+                    if self.on_fill: self.on_fill(res)

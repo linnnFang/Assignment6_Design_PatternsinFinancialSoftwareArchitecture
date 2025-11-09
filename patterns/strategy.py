@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 from collections import deque, defaultdict
 from dataclasses import dataclass
+from models import *
 
 
 @dataclass
@@ -32,9 +33,9 @@ class MeanReversionStrategy(Strategy):
         self.size = size
         self._prices = defaultdict(lambda: deque(maxlen=self.window))
 
-    def generate_signals(self, tick: Any) -> List[Dict[str, Any]]:
-        sym = getattr(tick, "symbol", None) or tick.get("symbol")
-        price = float(getattr(tick, "price", None) or tick.get("price"))
+    def generate_signals(self, tick: MarketDataPoint) -> List[Dict[str, Any]]:
+        sym = getattr(tick, "symbol", None) or tick.symbol
+        price = float(getattr(tick, "price", None) or tick.price)
         dq = self._prices[sym]
         dq.append(price)
         signals = []
@@ -50,9 +51,7 @@ class MeanReversionStrategy(Strategy):
                 pass
         return signals
 
-
 class BreakoutStrategy(Strategy):
-
     def __init__(self, window: int = 20, size: float = 10.0):
         self.window = window
         self.size = size
@@ -62,13 +61,40 @@ class BreakoutStrategy(Strategy):
         sym = getattr(tick, "symbol", None) or tick.get("symbol")
         price = float(getattr(tick, "price", None) or tick.get("price"))
         dq = self._prices[sym]
-        dq.append(price)
-        signals = []
+        signals: List[Dict[str, Any]] = []
+
+        # compute breakout vs. HISTORY ONLY
         if len(dq) >= self.window:
-            rolling_high = max(dq)
-            rolling_low = min(dq)
-            if price > rolling_high:
-                signals.append(Signal(sym, "BUY", self.size, price, {"rolling_high": rolling_high}).as_dict())
-            elif price < rolling_low:
-                signals.append(Signal(sym, "SELL", self.size, price, {"rolling_low": rolling_low}).as_dict())
+            rh = max(dq)
+            rl = min(dq)
+            if price > rh:
+                signals.append(Signal(sym, "BUY", self.size, price, {"rolling_high": rh}).as_dict())
+            elif price < rl:
+                signals.append(Signal(sym, "SELL", self.size, price, {"rolling_low": rl}).as_dict())
+
+        # update the rolling window AFTER decisions
+        dq.append(price)
         return signals
+
+
+if __name__ == "__main__":
+
+    cfg = Config("data/config.json")
+    loader = DataLoader(cfg)
+    paths = ["external_data_bloomberg.xml",
+    "external_data_yahoo.json",
+    "market_data.csv"]
+    data_iter = iter(loader.load_market_data(paths)) 
+    dataset = MarketDataContainer()
+    for data in data_iter:
+        dataset.buffer_data(data)
+
+    strats = [
+        MeanReversionStrategy(window=20, threshold=0.02, size=10.0),
+        BreakoutStrategy(window=20, size=10.0),
+    ]
+    signals = []
+    for s in strats:
+        for data in dataset:
+            signals.append(s.generate_signals(data))
+    print(signals)

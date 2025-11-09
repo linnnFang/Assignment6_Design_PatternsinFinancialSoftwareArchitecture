@@ -38,14 +38,26 @@ class PortfolioBuilder:
         return self
 
     # ==== build ====
-    def build(self) -> Portfolio:
-        """really build the Portfolio object"""
-        port = Portfolio(name=self._name, owner=self._owner)
+    def build(self) -> PortfolioGroup:
+        """
+        Build a PortfolioGroup (composite) tree.
+
+        Returns:
+            PortfolioGroup: root composite with Positions and nested groups.
+        """
+        
+        group = PortfolioGroup(name=self._name)
+
+        # add leaf positions
         for p in self._positions:
-            port.add_position(p["symbol"], p["quantity"], p.get("price"))
-        for b in self._subbuilders:
-            port.add_subportfolio(b.build())
-        return port
+            pos = Position(symbol=p["symbol"], quantity=p["quantity"], price=p["price"])
+            group.add(pos)
+
+        # add sub-groups from child builders
+        for child in self._subbuilders:
+            group.add(child.build())
+
+        return group
 
     # ==== json ====
     @staticmethod

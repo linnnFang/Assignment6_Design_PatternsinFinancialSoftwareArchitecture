@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Protocol
 from abc import ABC, abstractmethod
 import random
 import datetime
-from patterns.builder import PortfolioBuilder
+
          
 class MarketDataPoint:
     def __init__(self, symbol: str, price: float, timestamp: datetime):
