@@ -1,212 +1,222 @@
-# Design Report
+# Design Report — Assignment 6: Design Patterns in Financial Software Architecture
 
-**Project:** Assignment – Design Patterns in Financial Software Architecture  
-**Scope:** Summary of patterns used, rationale, trade-offs, and how pieces fit together
-
----
-
-## 1) Architecture Overview
-
-The system ingests heterogeneous market/instrument data, normalizes it, produces trading **signals**, converts them into **orders**, executes orders via the **Command** pattern, and updates a live **position book/portfolio**. Cross-cutting concerns (logging/alerts) are handled by **Observer**.
-
-![image info](flowchart_trading_engine.png)
----
-
-## 2) Creational Patterns
-
-### 2.1 Factory — `InstrumentFactory.create_instrument(data: dict) -> Instrument`
-**Problem:** Map CSV rows to `Stock`, `Bond`, `ETF` (and future types) without `if/elif` scattered everywhere.  
-**Rationale:** Centralizes object creation and data validation/transforms.  
-**Trade-offs:**
-- ✅ Easy to extend with new instruments.
-- ✅ Single place for field coercion (e.g., `float(coupon)`).
-- ❌ Adds an indirection layer; errors surface at runtime if `type` is wrong.
-- ❌ If growth continues, consider a registration map to avoid long `if` chains.
-
-### 2.2 Singleton — `Config`
-**Problem:** Multiple modules need consistent config (paths, params) without re-reading files.  
-**Rationale:** Cache JSON once, provide `get(key)` everywhere.  
-**Trade-offs:**
-- ✅ Eliminates repeated IO and “who owns config?” debates.
-- ✅ Guarantees global consistency.
-- ❌ Global state complicates tests; consider a reset/reload hook for test fixtures.
-- ❌ Add a lock if multithreaded initialization is possible; path only effective on first instantiation.
-
-### 2.3 Builder — `PortfolioBuilder`
-**Problem:** Construct nested portfolios with positions, sub-portfolios, metadata.  
-**Rationale:** Fluent API; JSON → builder → immutable(ish) composite tree.  
-**Trade-offs:**
-- ✅ Readable construction; easy to recreate from JSON.
-- ✅ Keeps complex construction logic out of the `Portfolio` class.
-- ❌ Slight verbosity; ensure `build()` is side-effect-free and fast.
-- ❌ Runtime changes to positions should not go through Builder (use runtime sinks).
+## 1) Goal & Scope
+Build a modular, testable **analytics + trading simulation** that:
+- Ingests heterogeneous market data (CSV, JSON, XML).
+- Normalizes it into a common model (`MarketDataPoint`).
+- Runs **multiple strategies** per tick (Mean Reversion, Breakout).
+- Publishes signals to observers (logging/alerts/metrics).
+- Routes + risk-checks signals into orders.
+- Executes orders with **undo/redo** (Command pattern).
+- Maintains positions/cash and aggregates portfolio value (Composite).
+- Extends instrument analytics via **decorators** without editing core classes.
 
 ---
 
-## 3) Structural Patterns
+## 2) Architecture Overview
 
-### 3.1 Adapter — `YahooFinanceAdapter`, `BloombergXMLAdapter`
-**Problem:** Normalize heterogeneous data formats (JSON/XML) to one `MarketDataPoint` model.  
-**Rationale:** Encapsulate format parsing; the rest of the system consumes a standard type.  
-**Trade-offs:**
-- ✅ Clean boundary with external providers.
-- ✅ Swappable if formats change.
-- ❌ You must maintain multiple adapters; add schema checks and better error messages.
-- ❌ Beware content drift (timestamp formats, field names).
+**Data Sources → Adapters → MarketDataPoint → Strategies → Publisher(Observers) → Router → Risk → Commands(Invoker+Account) → Positions/Portfolio(Composite) → Reporting/Analytics(Decorators)**
 
-### 3.2 Decorator — `VolatilityDecorator`, `BetaDecorator`, `DrawdownDecorator`
-**Problem:** Add analytics to instruments without modifying base class.  
-**Rationale:** Pluggable metrics that compose at runtime.  
-**Trade-offs:**
-- ✅ No base-class changes, flexible stacking.
-- ✅ Unit test each metric independently.
-- ❌ Ordering & duplicate keys need conventions (later decorator can override prior keys).
-- ❌ Ensure you call the wrapped object’s `get_metrics()` to merge results.
+```mermaid
+flowchart LR
+  subgraph IO[External Data]
+    A[Yahoo JSON] -->|Adapter| N[MarketDataPoint]
+    B[Bloomberg XML] -->|Adapter| N
+    C[instruments.csv] -->|Factory| D[Instrument objects]
+  end
 
-### 3.3 Composite — `Portfolio` (Groups + Positions)
-**Problem:** Treat positions and groups uniformly (`get_value()`, `get_positions()`).  
-**Rationale:** Tree structure with recursive aggregation.  
-**Trade-offs:**
-- ✅ Naturally models nested portfolios.
-- ✅ Easy aggregation via recursion.
-- ❌ Navigating/updating leaves requires careful APIs; keep runtime fills separate from structural build.
+  N --> S1[MeanReversion]
+  N --> S2[Breakout]
+  S1 --> P[SignalPublisher]
+  S2 --> P
+  P --> O1[LoggerObserver]
+  P --> O2[AlertObserver]
 
----
+  P --> R[OrderRouter]
+  R --> K[RiskManager]
+  K --> X[ExecuteOrderCommand + CommandInvoker]
+  X --> AC[Account (cash, positions)]
+  AC --> PG[PortfolioGroup (Composite)]
+  D -->|Decorators| AN[Instrument Analytics]
+```
 
-## 4) Behavioral Patterns
-
-### 4.1 Strategy — `MeanReversionStrategy`, `BreakoutStrategy`
-**Problem:** Interchangeable trading logic under a common interface.  
-**Rationale:** Each strategy maintains its own state (sliding windows) and emits signals.  
-**Trade-offs:**
-- ✅ Easy A/B testing and replacement.
-- ✅ Parameterization via JSON/Config.
-- ❌ Parameter sprawl; centralize param loading and defaults.
-- ❌ Implementation notes: In Breakout, compute rolling high/low **before** appending current price (or exclude current) to avoid never-triggering conditions.
-
-### 4.2 Observer — `SignalPublisher` + `LoggerObserver`, `AlertObserver`
-**Problem:** React to signals with side effects (logging, alerts) without hard coupling.  
-**Rationale:** Strategies don’t know who listens; observers subscribe dynamically.  
-**Trade-offs:**
-- ✅ Extensible (add KPIs, persistence, telemetry later).
-- ❌ Execution order of observers is unspecified; document if ordering matters.
-- ❌ Swallowing exceptions in observers prevents breaking the flow but can hide bugs—log clearly.
-
-### 4.3 Command — `ExecuteOrderCommand`, `CommandInvoker`, `Account`
-**Problem:** Encapsulate order execution with undo/redo and history.  
-**Rationale:** Commands carry context; invoker manages stacks for undo/redo.  
-**Trade-offs:**
-- ✅ Testable, reversible actions; clean separation from account state.
-- ✅ Fits backtesting and interactive UIs (undo/redo).
-- ❌ State management (already executed/not executed) adds complexity.
-- ❌ For high-throughput sims, command objects add overhead—batching may be needed.
+**Principles**
+- Thin engine; strategies hold state.
+- Sources isolated behind **adapters**.
+- Behavior via **strategies** and **observers** (plug-and-play).
+- State changes are explicit & reversible (**Command**).
 
 ---
 
-## 5) Trading Engine Orchestration (Glue, not Logic)
+## 3) Creational Patterns
 
-A lightweight **TradingEngine** wires everything:
-1. **Data source** (iterable of `MarketDataPoint`)
-2. **Strategies** → `generate_signals(tick)`  
-3. **SignalPublisher.notify(signal)** (observers for logging/alerts/metrics)  
-4. **OrderRouter** (signal → `Order`)  
-5. **RiskManager** (approve/resize/reject)  
-6. **Executor** (CommandInvoker + Account)  
-7. **Portfolio/Container sink** (apply fills to runtime positions)
+### Factory
+- **Problem:** Create `Stock`, `Bond`, `ETF` from `instruments.csv`.
+- **Impl:** `InstrumentFactory.create_instrument(row) -> Instrument`.
+- **Why:** Centralized construction, single responsibility.
+- **Tradeoff:** Add branches for new types (or switch to registry when many types).
 
-**Design rules:**
-- Engine does **no** indicator math, parsing, or account math.
-- Each dependency has a tiny interface; any piece can be swapped in tests.
-- Keep **runtime positions** (fills) separate from the **built portfolio tree**. Builder is for structure; fills update a live book (`MarketDataContainer` / `Account`).
+### Singleton
+- **Problem:** Shared configuration (paths, parameters).
+- **Impl:** `Config` (loads once from `config.json`; reused everywhere).
+- **Why:** Consistent settings without manual plumbing.
+- **Tradeoff:** Global state—keep API small and read-only after init.
 
----
-
-## 6) Data Loader Integration
-
-- `DataLoader` composes **Adapter** (Yahoo/Bloomberg) and **Factory** (instruments.csv).  
-- It returns standard types (`MarketDataPoint`, `Instrument`) so downstream modules don’t care about file formats.  
-- Prefer generator style (`yield`) for streaming backtests; lists are fine for small datasets.
+### Builder
+- **Problem:** Build nested portfolios from JSON.
+- **Impl:** `PortfolioBuilder` (`add_position`, `add_subportfolio`, `build`, `from_json`).
+- **Why:** Separates construction from representation; repeatable builds.
+- **Tradeoff:** Extra layer, but valuable for nested structures and tests.
 
 ---
 
-## 7) Testing Strategy
+## 4) Structural Patterns
 
-**Unit tests by pattern:**
-- **Factory**: type mapping, field coercion, bad `type` errors.
-- **Singleton**: same instance; temp config file; error message on malformed JSON.
-- **Builder/Composite**: nested aggregation, leaf enumeration, JSON round-trip.
-- **Decorators**: each metric with deterministic sequences; stacking merges keys.
-- **Adapters**: parse fixtures; timestamp correctness; symbol mismatch raises.
-- **Strategy**: canned price streams yield expected signals (MR threshold, Breakout edges).
-- **Observer**: spies capture notifications; errors in observers don’t break flow.
-- **Command**: execute/undo/redo with cash & positions invariants.
+### Adapter
+- **Problem:** External formats differ (Yahoo JSON, Bloomberg XML).
+- **Impl:** `YahooFinanceAdapter.get_data(symbol)`, `BloombergXMLAdapter.get_data(symbol)` → `MarketDataPoint`.
+- **Why:** Vendor-agnostic engine; shared internal shape.
+- **Tradeoff:** One adapter per vendor—explicit and simple.
 
-**Integration tests:**
-- Fake data iterator + fake strategy emitting known signals → ensure router/risk/executor/sink called in order.  
-- End-to-end dry run prints positions/cash and observer logs.
+### Composite
+- **Problem:** Aggregate positions & sub-portfolios uniformly.
+- **Impl:** `PortfolioComponent` (abstract), `Position` (leaf), `PortfolioGroup` (composite).
+  - `get_value()` sums recursively; `get_positions()` flattens symbol → qty.
+- **Why:** Treat groups and leaves identically.
+- **Tradeoff:** Recursive traversal—keep methods pure/simple.
 
----
-
-## 8) Key Trade-offs & Alternatives
-
-| Concern | Choice | Why | Trade-off / Alternative |
-|---|---|---|---|
-| Object creation | Factory | Centralized mapping & validation | Registry map to avoid long `if`; or use dataclass `from_dict` with type map |
-| Global config | Singleton | One source of truth | Harder to test; inject config object or add `reload()` for tests |
-| Portfolio build | Builder + Composite | Clean structure & recursion | Runtime fills separate; or use a mutable composite with thread-safe updates |
-| Analytics | Decorator | Zero changes to base class | Key collisions; define a naming convention or namespacing |
-| Data normalization | Adapter | Hide external formats | Need maintenance as providers change; add schema validation |
-| Strategy swap | Strategy | A/B friendly | Param sprawl; add param schemas & defaults |
-| Side effects | Observer | Pluggable listeners | Ordering/visibility; add structured logging & error counters |
-| Execution | Command | Undo/redo, testable | Overhead in high-throughput; micro-batch commands for sims |
+### Decorator
+- **Problem:** Add analytics without modifying core `Instrument`.
+- **Impl:** `InstrumentDecorator` base; `VolatilityDecorator`, `BetaDecorator`, `DrawdownDecorator` add fields in `get_metrics()`.
+- **Why:** Stackable analytics; open for extension.
+- **Tradeoff:** Ensure each decorator reads stable base fields; avoid order dependence.
 
 ---
 
-## 9) Performance & Robustness Notes
+## 5) Behavioral Patterns
 
-- **Time windows**: Deques with `maxlen` are O(1) append; rolling max/min are O(window) unless you switch to monotonic queues.
-- **Numeric stability**: Distinguish sample vs population stats; consider `Decimal` for cash/price if cents matter.
-- **Timestamps**: Normalize to timezone-aware `datetime` (UTC) at adapters.
-- **Error handling**: Adapters/Factory should raise precise errors with file+line context; observers should log tracebacks.
+### Strategy
+- **Problem:** Interchangeable trading logic.
+- **Impl:** `Strategy.generate_signals(tick)`; `MeanReversionStrategy`, `BreakoutStrategy`.
+  - Mean reversion uses rolling mean with threshold band.
+  - Breakout compares **current price vs. prior window** (compute bounds *before* appending current price).
+- **Why:** Engine is generic; strategies are pluggable and testable.
+- **Tradeoff:** Warm-up windows and per-symbol state—document gating.
 
----
+### Observer
+- **Problem:** Decouple signal side-effects.
+- **Impl:** `SignalPublisher.attach/detach/notify`; `LoggerObserver`, `AlertObserver`, optional `MetricsObserver`.
+- **Why:** Add logging/alerts without touching the engine or strategies.
+- **Tradeoff:** Fan-out must be robust (swallow/handle observer errors).
 
-## 10) Future Enhancements
-
-- **RiskManager v2**: exposure, per-symbol limits, notional caps, circuit breakers.
-- **Execution model**: slippage, fees, partial fills, market/limit orders.
-- **Portfolio sink**: realized/unrealized PnL, FIFO/LIFO lots, shorting support.
-- **MetricsObserver**: Prometheus/CSV for signals, fills, PnL over time.
-- **Config hygiene**: JSON schema validation; environment overrides.
-- **Engine modes**: backtest (historical iterator), paper (sim fills), live (broker API adapter).
-
----
-
-## 11) “How to Read the Code” Map
-
-- **patterns/**
-  - `factory.py` — instrument creation
-  - `singleton.py` — config
-  - `decorators.py` — metrics
-  - `observer.py` — publisher + observers
-  - `command.py` — command + invoker + account
-- **core/**
-  - `strategy.py` — strategies
-  - `portfolio.py` / `builder.py` — composite + builder
-- **io/**
-  - `dataloader.py` — adapters + CSV loader
-- **models/**
-  - `MarketDataPoint`, `Portfolio`, `Order`, etc.
-- **engine/**
-  - `engine.py` — orchestration (data → signals → orders → fills)
+### Command (+ Invoker)
+- **Problem:** Executable, undoable trades.
+- **Impl:** `ExecuteOrderCommand(account, symbol, action, quantity, price)`; `CommandInvoker` manages history/redo; `Account` stores cash/positions.
+  - `from_signal()` bridges strategy signals → commands.
+- **Why:** Deterministic, reversible transitions; ideal for demos/tests.
+- **Tradeoff:** Slight ceremony; payoff in correctness and auditability.
 
 ---
 
-## 12) TL;DR
+## 6) Engine Orchestration
 
-- We used **Factory/Singleton/Builder** to construct and configure domain objects safely.  
-- We used **Adapter/Decorator/Composite** to normalize data, add metrics, and represent hierarchical portfolios.  
-- We used **Strategy/Observer/Command** to generate signals, handle side effects, and execute orders with undo/redo.  
-- A thin **TradingEngine** orchestrates everything without leaking responsibilities.  
+**Loop (single pass; both strategies per tick):**
+1. Merge ticks from adapters + CSV; sort by timestamp.
+2. For each tick:
+   - For each strategy: `signals = strat.generate_signals(tick)`.
+   - For each signal:
+     - `publisher.notify(signal)` (observers run).
+     - `router.route(signal)` (identity in baseline).
+     - `risk.approve(order)` (size/position limits).
+     - `ExecuteOrderCommand.from_signal(account, order)`; `invoker.execute_cmd(cmd)`.
+3. Positions/cash recorded in `Account`; portfolio aggregation via Composite if desired.
 
+**Why outer loop over data?**  
+If data is an iterator, looping strategies first would exhaust data for the first strategy. Current design ensures both strategies see the same tick.
 
+---
+
+## 7) Data Ingestion
+
+- **Adapters:** Yahoo JSON / Bloomberg XML → `MarketDataPoint`.
+- **CSV:** `read_ticks_csv()` yields `MarketDataPoint` (streaming; UTC-aware timestamps).
+- **Instruments:** `instruments.csv` → Factory → domain objects.
+- **Merging:** Combine adapter ticks with CSV ticks; `sorted(..., key=lambda t: t.timestamp)`.
+
+---
+
+## 8) Testing Strategy
+
+- **Factory**: Creates correct subclass; errors on unknown type.
+- **Singleton**: Same instance reused; reads config values.
+- **Strategies**: Mean reversion & breakout generate expected signals (ensure breakout compares against history).
+- **Observer**: Logger/alerts receive notifications; detach works; exceptions don’t break publish flow.
+- **Command**: Execute/undo/redo correctness; idempotency guards; `from_signal` preserves fields & meta.
+- **Adapters/DataLoader**: JSON/XML/CSV parse to `MarketDataPoint` with proper timestamps.
+- **Analytics (Decorators)**: Keys present; formulas/ranges; stacking order independent; base metrics not mutated.
+- **Integration**: Minimal engine run produces a trade and updates `Account`.
+
+**Pytest tips**
+- Use absolute imports in tests (e.g., `from patterns.command import ...`).
+- Add `pytest.ini` with:
+  ```ini
+  [pytest]
+  pythonpath = .
+  ```
+  or adjust `tests/conftest.py` to insert the project root into `sys.path`.
+
+---
+
+## 9) Key Design Decisions & Trade-offs
+
+1. **Thin Engine**: Pure orchestration; no indicator math—keeps coupling low.
+2. **Per-Strategy State**: Rolling windows inside strategies; warm-up gating reduces noise.
+3. **Breakout Correctness**: Compare to history **before** appending the current price.
+4. **Command for Execution**: Enables undo/redo and deterministic tests (extra code, big payoff).
+5. **Adapters**: New vendors don’t touch engine/strategies.
+6. **Composite Portfolio**: Uniform aggregation across nested groups.
+7. **Decorators**: Analytics opt-in and stackable; base `Instrument` stays unchanged.
+
+---
+
+## 10) Extensibility & Future Work
+
+- **Risk**: sector/net exposure limits, P&L stops, VAR.
+- **Router/Execution**: venues, slippage/fees, partial fills, latency.
+- **Strategies**: momentum, pairs, multi-asset, portfolio-level.
+- **Valuation**: bind `Position.price` to last tick per symbol; daily NAV and performance metrics.
+- **Persistence**: event logs, fills, positions to disk/DB.
+- **Config**: broaden `config.json`/`strategy_params.json`; environment-specific overrides.
+- **Performance**: batch processing or per-tick parallelism across strategies.
+
+---
+
+## 11) How to Run
+
+```bash
+# from project root
+python main.py
+```
+
+**Data expectations**
+- `config.json` includes `"data_path"` pointing to your `data/` folder.
+- Place `market_data.csv`, `external_data_yahoo.json`, `external_data_bloomberg.xml`, `instruments.csv`, `portfolio_structure.json` under `data/`.
+
+**Run tests**
+```bash
+pip install pytest
+# optional: add pytest.ini with 'pythonpath = .'
+pytest -q
+```
+
+---
+
+## 12) Summary
+
+This codebase demonstrates how classic **GoF patterns** compose into a cohesive trading simulation:
+
+- **Factory / Builder / Singleton**: object creation & configuration.
+- **Adapter / Composite / Decorator**: structural flexibility and integration.
+- **Strategy / Observer / Command**: behavior encapsulation, decoupled side-effects, and reversible execution.
+
+The result is a modular, readable, and easily testable system where new strategies, data sources, analytics, and execution logic can be added with minimal ripple across the code.

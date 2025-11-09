@@ -1,210 +1,243 @@
+# Assignment 6 — Design Patterns in Financial Software Architecture
 
-# FINM32500 Assignment 6 
-
-A compact, testable scaffold that demonstrates GoF patterns in a toy trading pipeline:
-Factory, Singleton, Builder + Composite, Decorator, Adapter, Strategy, Observer, and Command.
+A modular, testable **analytics & trading simulation** that demonstrates core GoF patterns across data ingestion, strategy execution, eventing, risk & routing, execution with undo/redo, portfolio aggregation, and analytics decoration.
 
 ---
 
-## 📦 Project Structure (suggested)
-![image info](flowchart_trading_engine.png)
+## ✨ Features (Pattern → Module)
+- **Factory** → `patterns/factory.py` — build `Stock/Bond/ETF` from `instruments.csv`
+- **Singleton** → `patterns/singleton.py` — global `Config` loads `config.json` once
+- **Builder** → `builder.py` — fluent portfolio builder; `from_json()`
+- **Adapter** → `dataloader.py` — normalize Yahoo JSON & Bloomberg XML to `MarketDataPoint`
+- **Composite** → `portfolio_components.py` — `PortfolioGroup` and `Position` aggregation
+- **Decorator** → `analytics.py` — add `volatility`, `beta`, `max_drawdown` via stacking
+- **Strategy** → `patterns/strategy.py` — `MeanReversionStrategy`, `BreakoutStrategy`
+- **Observer** → `patterns/observer.py` — `SignalPublisher`, `LoggerObserver`, `AlertObserver`
+- **Command** → `patterns/command.py` — `ExecuteOrderCommand`, `CommandInvoker`, `Account`
+- **Engine** → `engine.py` — orchestration: data → strategies → observers → router → risk → commands
 
+---
+
+## 📦 Project Structure
 ```
-.
+Assignment6_Design_PatternsinFinancialSoftwareArchitecture/
+├─ analytics.py
+├─ builder.py
+├─ dataloader.py
+├─ engine.py
+├─ main.py
+├─ models.py
+├─ portfolio_components.py
+├─ patterns/
+│  ├─ __init__.py
+│  ├─ command.py
+│  ├─ factory.py
+│  ├─ observer.py
+│  ├─ singleton.py
+│  └─ strategy.py
+├─ tests/
+│  ├─ conftest.py
+│  ├─ test_analytics.py
+│  ├─ test_command.py
+│  ├─ test_dataloader.py
+│  ├─ test_engine_integration.py
+│  ├─ test_factory.py
+│  ├─ test_observer_command_flow.py
+│  └─ test_strategy.py
 ├─ data/
 │  ├─ config.json
-│  ├─ external_data_bloomberg.xml
-│  ├─ external_data_yahoo.json
 │  ├─ instruments.csv
 │  ├─ market_data.csv
-│  ├─ portfolio_structure.json
-│  └─ strategy_params.json
-│
-├─ patterns/                 # Design pattern implementations
-│  ├─ __init__.py
-│  ├─ builder.py            # PortfolioBuilder (Builder) + Composite integration
-│  ├─ command.py            # Command, ExecuteOrderCommand, Account, Invoker
-│  ├─ factory.py            # InstrumentFactory (Factory)
-│  ├─ observer.py           # SignalPublisher + Observers (Observer)
-│  ├─ singleton.py          # Config (Singleton)
-│  └─ strategy.py           # Strategy base + MeanReversion/Breakout
-│
-├─ tests/                    # Pytest test suite
-│  ├─ __init__.py
-│  ├─ test_mean_reversion.py
-│  ├─ test_observer.py
-│  ├─ test_reporting.py
-│  └─ test_singleton.py
-│
-├─ analytics.py              # metrics/report utilities
-├─ dataloader.py             # Adapters (Yahoo/Bloomberg) + CSV loading
-├─ designreport.md           # Design report (patterns, rationale, trade-offs)
-├─ engine.py                 # TradingEngine orchestration (data → signals → orders → fills)
-├─ flowchart_trading_engine.png   # Architecture diagram (PNG)
-├─ flowchart_trading_engine.svg   # Architecture diagram (SVG)
-├─ models.py
-├─ reporting.py
-└─ main.py                   # CLI entry / demo runner
-
+│  ├─ external_data_yahoo.json
+│  ├─ external_data_bloomberg.xml
+│  └─ portfolio_structure.json
+└─ design_report.md
 ```
 
-> If you keep `models.py` (e.g., `MarketDataPoint`, `parse_ts`) in the repo root,
-> use **absolute imports** from the project root (e.g., `from models import MarketDataPoint`)
-> and run with `PYTHONPATH=.` (see below).
-
----
-
-## ⚙️ Requirements
-
-- Python **3.9+** (3.10+ recommended)
-- `pip install -U pytest` (for tests)
-
-Optional (formatting/lint): `pip install -U black ruff`
+> If you see `ModuleNotFoundError` during tests, ensure you run from the **project root** and add a `pytest.ini` with `pythonpath = .` (see Troubleshooting).
 
 ---
 
 ## 🚀 Quick Start
 
-### 1) Run the main demo
+### 1) Requirements
+- Python 3.10+
+- Optional: create a virtual env
 
-From the **project root** (the directory that contains `main.py`):
-
-**macOS/Linux**
 ```bash
-PYTHONPATH=. python main.py
+python -m venv .venv
+source .venv/bin/activate  # (Windows) .venv\Scripts\activate
+pip install -U pip pytest
 ```
 
-**Windows PowerShell**
-```powershell
-$env:PYTHONPATH="."
-python .\main.py
+### 2) Data Placement
+Place the provided data files under `data/`:
+```
+data/
+  config.json
+  instruments.csv
+  market_data.csv
+  external_data_yahoo.json
+  external_data_bloomberg.xml
+  portfolio_structure.json
 ```
 
+Ensure `data/config.json` contains:
+```json
+{ "data_path": "data" }
+```
+
+### 3) Run the demo
+```bash
+python main.py
+```
 This will:
-1. Load minimal config (or defaults)  
-2. Ingest two example ticks from `data/external_data_yahoo.json` and `data/external_data_bloomberg.xml` via Adapters  
-3. Run a tiny Mean-Reversion strategy  
-4. Publish signals to Observers (console logger + in‑memory metrics)  
-5. Execute orders via a simple Command/Broker pair
-
-You should see signal logs (if any), a metrics snapshot, and final positions.
+1. Load instruments via **Factory**.
+2. Load market data via **Adapters** and CSV.
+3. Merge & sort ticks; run **both strategies** per tick.
+4. Publish signals (**Observer**) → route → risk-check → execute (**Command**) → update **Account**.
 
 ---
 
-## 🧱 Patterns in This Scaffold
+## 🧪 Run Tests
 
-- **Factory**: (`InstrumentFactory`) creates `Instrument` objects from CSV.
-- **Singleton**: `Config` loads `config.json` once; shared instance across modules.
-- **Builder + Composite**: `PortfolioBuilder` builds nested `PortfolioGroup` trees of `Position`s.
-- **Decorator**: `VolatilityDecorator`, `BetaDecorator`, `DrawdownDecorator` augment `.get_metrics()` results without touching base classes.
-- **Adapter**: `YahooFinanceAdapter`, `BloombergXMLAdapter` normalize heterogeneous data into `MarketDataPoint(symbol, timestamp, price, source)`.
-- **Strategy**: `MeanReversionStrategy` / `BreakoutStrategy` expose `generate_signals(tick) -> list[dict]`.
-- **Observer**: `SignalPublisher` notifies `LoggerObserver`, `MetricsObserver` when signals are generated.
-- **Command**: `ExecuteOrderCommand` encapsulates trades; `CommandInvoker` supports `do/undo/redo`.
-
-> The demo focuses on Adapter + Strategy + Observer + Command so you have a runnable end-to-end loop.
-> Other patterns are designed to slot in the same flow.
-
----
-
-## 🧪 Tests
-
-**Run all tests**
+Install pytest and run from project root:
 ```bash
+pip install pytest
 pytest -q
 ```
-
-**Example test included**
-- `tests/test_reporting.py`: validates the Observer flow (logger output + metrics counters).
-
-**What else to test (suggested)**
-- Factory: type creation from `instruments.csv`
-- Singleton: unique instance + config keys
-- Decorator: stacked metrics dict merge (volatility/beta/drawdown)
-- Strategy: deterministic signals on fixed sequences
-- Command: do/undo/redo evolves positions correctly
-
----
-
-## 🧰 Adapters: File Formats & Usage
-
-**MarketDataPoint (minimal)**  
-```python
-@dataclass(frozen=True, slots=True)
-class MarketDataPoint:
-    symbol: str
-    timestamp: datetime    # timezone-aware preferred
-    price: float
-    source: str            # e.g., "Yahoo" | "Bloomberg"
-```
-
-**Yahoo JSON expected shape**
-```json
-{
-  "ticker": "AAPL",
-  "last_price": 172.35,
-  "timestamp": "2025-10-01T09:30:00Z"
-}
-```
-
-**Bloomberg XML expected shape**
-```xml
-<instrument>
-  <symbol>MSFT</symbol>
-  <price>328.10</price>
-  <timestamp>2025-10-01T09:30:00Z</timestamp>
-</instrument>
-```
-
-Both adapters expose:
-```python
-.get_data(symbol: str) -> MarketDataPoint
-```
-
----
-
-## 🧭 Running as a Package vs Script
-
-### Option A: Run as scripts (simple)
-Use absolute imports and set `PYTHONPATH=.` from the project root:
+Or with coverage:
 ```bash
-PYTHONPATH=. python patterns/adapter.py
+pip install pytest-cov
+pytest -q --cov=. --cov-report=term-missing
 ```
 
-### Option B: Run as a package (cleaner for multi-module)
-Ensure directories are packages (add `__init__.py`), ensure valid package names (no spaces or `-`). Then:
-```bash
-python -m your_package.patterns.adapter
+> If pytest can’t import modules, add `pytest.ini`:
+> ```ini
+> [pytest]
+> pythonpath = .
+> ```
+
+---
+
+## 🧠 Architecture (Mermaid)
+```mermaid
+flowchart LR
+  subgraph IO[External Data]
+    A[Yahoo JSON] -->|Adapter| N[MarketDataPoint]
+    B[Bloomberg XML] -->|Adapter| N
+    C[instruments.csv] -->|Factory| D[Instrument objects]
+  end
+
+  N --> S1[MeanReversion]
+  N --> S2[Breakout]
+  S1 --> P[SignalPublisher]
+  S2 --> P
+  P --> O1[LoggerObserver]
+  P --> O2[AlertObserver]
+
+  P --> R[OrderRouter]
+  R --> K[RiskManager]
+  K --> X[ExecuteOrderCommand + CommandInvoker]
+  X --> AC[Account (cash, positions)]
+  AC --> PG[PortfolioGroup (Composite)]
+  D -->|Decorators| AN[Instrument Analytics]
+```
+
+**Why left-to-right?** Clear view of the single-pass engine: every tick → every strategy, then fan-out to observers & execution.
+
+---
+
+## ⚙️ Configuration
+
+- `patterns/singleton.py::Config` loads `data/config.json` once.
+- Access anywhere:
+  ```python
+  from patterns.singleton import Config
+  cfg = Config("data/config.json")  # first time loads
+  another = Config()                # reuse existing instance
+  path = cfg.get("data_path", "data")
+  ```
+
+---
+
+## 🧩 Strategy Notes
+
+- **Mean Reversion**
+  - Rolling window per symbol via `deque`; warm-up gate `max(2, window/4)`.
+  - BUY if `price < mean * (1 - threshold)`, SELL if `price > mean * (1 + threshold)`.
+
+- **Breakout**
+  - **Important:** compute `rolling_high/low` **before** appending current price; then append.
+  - BUY if `price > rolling_high`; SELL if `price < rolling_low`.
+
+- Both strategies return `Signal(...).as_dict()` with fields: `symbol`, `action`, `size`, `price`, `meta`.
+
+---
+
+## 🧾 Commands & Execution
+
+- `ExecuteOrderCommand.from_signal(account, signal)` bridges signals to trades.
+- `CommandInvoker` supports `undo()` / `redo()` for demos/tests.
+- `Account` tracks `cash` and `positions` (signed quantities).
+
+Example:
+```python
+from patterns.command import Account, ExecuteOrderCommand, CommandInvoker
+
+acct = Account(100_000)
+inv = CommandInvoker()
+sig = {"symbol": "AAPL", "action": "BUY", "size": 10, "price": 150.0}
+cmd = ExecuteOrderCommand.from_signal(acct, sig)
+inv.execute_cmd(cmd)   # executes trade
+inv.undo(); inv.redo() # demo reversibility
 ```
 
 ---
 
-## 🐞 Troubleshooting
+## 🧱 Portfolio (Composite) & Builder
 
-- **`ModuleNotFoundError: No module named 'models'`**  
-  Run from the **project root** and set `PYTHONPATH=.` or use package-style `python -m ...`.
-
-- **`attempted relative import with no known parent package`**  
-  You ran a module directly while using **relative imports**. Either switch to absolute imports + `PYTHONPATH=.` or run with `python -m package.module`.
-
-- **`AttributeError: datetime has no attribute fromisoformat`**
-  - Make sure you import the class, not the module: `from datetime import datetime` then `datetime.fromisoformat(...)`  
-  - For older Python, add a `strptime` fallback.
-
-- **IndentationError / TabError**  
-  Convert all tabs to spaces; use 4 spaces per level. `python -m tabnanny your_file.py` helps locate issues.
+- **Composite:** `PortfolioGroup` and `Position` expose `get_value()` and `get_positions()`.
+- **Builder:** Construct nested portfolios, or load from JSON:
+```python
+from builder import PortfolioBuilder
+root = PortfolioBuilder.from_json("data/portfolio_structure.json").build()
+print(root.get_value(), root.get_positions())
+```
 
 ---
 
-## 📝 Design Notes (short)
+## 🧪 Analytics via Decorators
 
-- Value objects (`MarketDataPoint`) are `frozen=True, slots=True` → immutable, memory‑efficient.
-- Decorators return **new dicts** via `{**base, "metric": value}` shallow-merge to avoid side effects.
-- Observer kept synchronous for clarity; production systems often decouple via a queue/bus.
-- Strategy parameters can live in `data/strategy_params.json`, loaded via Singleton `Config`.
+- Wrap instruments without modifying base class:
+```python
+from analytics import VolatilityDecorator, BetaDecorator, DrawdownDecorator
+wrapped = DrawdownDecorator(BetaDecorator(VolatilityDecorator(stock)))
+metrics = wrapped.get_metrics()
+# {'symbol':..., 'price':..., 'volatility':..., 'beta':..., 'max_drawdown':...}
+```
+
+---
+
+## 🧯 Troubleshooting
+
+**`ModuleNotFoundError: No module named 'patterns'`**
+- Run commands from the **project root**.
+- Ensure `patterns/__init__.py` exists.
+- Add `pytest.ini` in root:
+  ```ini
+  [pytest]
+  pythonpath = .
+  ```
+- In VS Code, set the run configuration cwd to the project root.
+
+**Breakout test not firing**
+- Ensure bounds are computed **before** appending the current price.
+
+**Mean reversion not emitting signals**
+- Provide enough warm-up ticks, or reduce `window`, or adjust `threshold`.
 
 ---
 
 ## 📄 License
-
-For coursework/demo purposes. 
+For course use. Adapt as needed for your assignments or demos.
